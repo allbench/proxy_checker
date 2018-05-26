@@ -43,11 +43,23 @@ func main() {
 	defer file.Close()
 	os.Create("good_proxy.txt")
 	// Узнаем свой текущий внешний ip
-	res, _ := http.Get(ipChecker)
-	data, _ := ioutil.ReadAll(res.Body)
-	r, _ := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+)")
-	pr, _ := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+:[[:digit:]]+)")
-
+	res, err := http.Get(ipChecker)
+	if err != nil {
+		fmt.Println("Unable to connect.\nПроверьте сетевое подключение.")
+		os.Exit(1)
+	}
+	data, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	r, err := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	pr, err := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+:[[:digit:]]+)")
+	if err != nil {
+		log.Fatal(err)
+	}
 	myip := r.FindString(string(data))
 	fmt.Println(myip)
 
