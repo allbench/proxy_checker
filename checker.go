@@ -1,15 +1,15 @@
 package main
 
 /*
-Написано по мотивам https://habr.com/post/128477/
-по скорости работы разница не велика, но памяти потребляет несравнимо меньше.
+	Написано по мотивам https://habr.com/post/128477/
+	по скорости работы разница не велика, но памяти потребляет несравнимо меньше.
 */
 
 import (
 	"bufio"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -21,111 +21,67 @@ import (
 	"time"
 )
 
-func main() {
+var (
+	proxies      []string
+	lastProxy    uint64
+	ipCheckerUrl = "http://myip.ru/index_small.php"
+	myIp         string
+)
 
-	// Установка переменных
-	var (
-		proxies   []string
-		lastProxy uint64
-	)
+func main() {
 	flag.Parse()
-	ipChecker := "http://myip.ru/index_small.php"
-	numThreads, err := strconv.Atoi(flag.Arg(0))
-	if err != nil {
-		fmt.Println("Usage: " + os.Args[0] + " <count_threads>" + " <file_with_proxy>")
-		os.Exit(1)
-	}
-	file, err := os.Open(flag.Arg(1))
-	if err != nil {
-		fmt.Println("Usage: " + os.Args[0] + " <count_threads>" + " <file_with_proxy>")
-		os.Exit(1)
-	}
+	countThreads := countThreadsOrExit(flag.Arg(0))
+	file := proxyFileOrExit(flag.Arg(1))
 	defer file.Close()
+
 	os.Create("good_proxy.txt")
-	// Узнаем свой текущий внешний ip
-	res, err := http.Get(ipChecker)
-	if err != nil {
-		fmt.Println("Unable to connect.\nПроверьте сетевое подключение.")
-		os.Exit(1)
-	}
-	data, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-	r, err := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+)")
-	if err != nil {
-		log.Fatal(err)
-	}
-	pr, err := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+:[[:digit:]]+)")
-	if err != nil {
-		log.Fatal(err)
-	}
-	myip := r.FindString(string(data))
-	fmt.Println(myip)
+	myIpRegexp := regexpForMyIp()
+	myIp = getMyIp(ipCheckerUrl, myIpRegexp)
+	fmt.Println("My IP is: " + myIp)
+
+	loadProxyFromFile(file)
+	fmt.Println("Proxies found: ", len(proxies))
 
 	wg := sync.WaitGroup{}
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		if pr.MatchString(scanner.Text()) {
-			proxy := pr.FindString(scanner.Text())
-			proxies = append(proxies, proxy)
-		}
-	}
-
-	fmt.Println("Proxies found: ", len(proxies))
-	// Создаём нужное количество потоков
-	for i := 1; i < numThreads; i++ {
+	for i := 1; i < countThreads; i++ {
 		wg.Add(1)
 
 		go func(i int) {
 			defer wg.Done()
-			// Бесконечный цикл
 			for {
-				// Берём следующий номер в списке
-				seq := atomic.AddUint64(&lastProxy, 1)
-				// Если список кончился, заканчиваем
-				if int(seq) >= len(proxies) {
+				sequence := atomic.AddUint64(&lastProxy, 1)
+				if int(sequence) >= len(proxies) {
 					fmt.Println("- Thread ", i, " done.")
 					return
 				}
-				// Получаем следующую проксю из списка
-				proxy := proxies[seq]
-				// Стартует качалка
+				proxy := proxies[sequence]
 				proxyUrl, err := url.Parse("http://" + proxy)
-				timeout := time.Duration(10 * time.Second)
-				httpClient := &http.Client{
-					Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)},
-					Timeout:   timeout,
-				}
-				response, err := httpClient.Get("http://myip.ru/index_small.php")
-				if err != nil { // отчёт
-					fmt.Printf("Thread %02d; Seq. %03d; Proxy %20s; Status: ", i, seq, proxy)
-					fmt.Println("Unable to connect.")
+				if err != nil {
+					fmt.Println("Broken...")
 				} else {
-					defer response.Body.Close()
-					content, err := ioutil.ReadAll(response.Body)
+					httpClient := &http.Client{
+						Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)},
+						Timeout:   time.Duration(10 * time.Second),
+					}
+					response, err := httpClient.Get(ipCheckerUrl)
 					if err != nil {
-						log.Fatal(err)
-					} // отчёт
-					fmt.Printf("Thread %02d; Seq. %03d; Proxy %20s; Status: ", i, seq, proxy)
-					newip := r.FindString(string(content))
-					if newip == myip {
-						fmt.Println("Open.")
-					} else if r.FindString(string(content)) != "" {
-						fmt.Println("Anonimous:" + newip)
-						f, err := os.OpenFile("good_proxy.txt", os.O_APPEND|os.O_WRONLY, 0644)
+						fmt.Printf("Thread %02d; Sequence %03d; Proxy %20s; Status: Unable to connect.\n", i, sequence, proxy)
+					} else {
+						defer response.Body.Close()
+						content, err := io.ReadAll(response.Body)
 						if err != nil {
 							log.Fatal(err)
 						}
-						defer f.Close()
-
-						if _, err = f.WriteString(proxy + "\n"); err != nil {
-							log.Fatal(err)
+						fmt.Printf("Thread %02d; Seq. %03d; Proxy %20s; Status: ", i, sequence, proxy)
+						newIp := myIpRegexp.FindString(string(content))
+						if newIp == myIp {
+							fmt.Println("Open.")
+						} else if myIpRegexp.FindString(string(content)) != "" {
+							fmt.Println("Anonymous:" + newIp)
+							saveGoodProxy(proxy)
+						} else {
+							fmt.Println("Not Working...")
 						}
-						f.Sync()
-					} else {
-						fmt.Println("Not Working...")
 					}
 				}
 
@@ -133,4 +89,78 @@ func main() {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func saveGoodProxy(proxy string) {
+	f, err := os.OpenFile("good_proxy.txt", os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	if _, err = f.WriteString(proxy + "\n"); err != nil {
+		log.Fatal(err)
+	}
+	f.Sync()
+}
+
+func countThreadsOrExit(count string) int {
+	countThreads, err := strconv.Atoi(count)
+	if err != nil {
+		printError()
+		os.Exit(1)
+	}
+	return countThreads
+}
+
+func proxyFileOrExit(fileName string) *os.File {
+	file, err := os.Open(fileName)
+	if err != nil {
+		printError()
+		os.Exit(1)
+	}
+	return file
+}
+
+func regexpForMyIp() *regexp.Regexp {
+	r, err := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	return r
+}
+
+func regexpForProxy() *regexp.Regexp {
+	r, err := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+:[[:digit:]]+)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	return r
+}
+
+func getMyIp(ipCheckerUrl string, myIpRegexp *regexp.Regexp) string {
+	res, err := http.Get(ipCheckerUrl)
+	if err != nil {
+		fmt.Println("Unable to connect.\nПроверьте сетевое подключение.")
+		os.Exit(1)
+	}
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return myIpRegexp.FindString(string(data))
+}
+
+func loadProxyFromFile(file *os.File) {
+	scanner := bufio.NewScanner(file)
+	proxyIpRegexp := regexpForProxy()
+	for scanner.Scan() {
+		if proxyIpRegexp.MatchString(scanner.Text()) {
+			proxy := proxyIpRegexp.FindString(scanner.Text())
+			proxies = append(proxies, proxy)
+		}
+	}
+}
+
+func printError() {
+	fmt.Println("Usage: " + os.Args[0] + " <count_threads>" + " <file_with_proxy>")
 }
