@@ -60,16 +60,17 @@ func Checker(countThreads int, file *os.File) {
 						if err != nil {
 							log.Fatal(err)
 						}
-						fmt.Printf("Thread %02d; Seq. %03d; Proxy %20s; Status: ", i, sequence, proxy)
+						var output = fmt.Sprintf("Thread %02d; Seq. %03d; Proxy %20s; Status: ", i, sequence, proxy)
 						newIp := myIpRegexp.FindString(string(content))
 						if newIp == myIp {
-							fmt.Println("Open.")
+							output += "Open."
 						} else if myIpRegexp.FindString(string(content)) != "" {
-							fmt.Println("Anonymous:" + newIp)
+							output += "Anonymous:" + newIp
 							saveGoodProxy(proxy)
 						} else {
-							fmt.Println("Not Working...")
+							output += "Not Working..."
 						}
+						fmt.Println(output)
 					}
 				}
 
