@@ -1,13 +1,7 @@
-package main
-
-/*
-	Написано по мотивам https://habr.com/post/128477/
-	по скорости работы разница не велика, но памяти потребляет несравнимо меньше.
-*/
+package checker
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -15,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,12 +21,7 @@ var (
 	myIp         string
 )
 
-func main() {
-	flag.Parse()
-	countThreads := countThreadsOrExit(flag.Arg(0))
-	file := proxyFileOrExit(flag.Arg(1))
-	defer file.Close()
-
+func Checker(countThreads int, file *os.File) {
 	os.Create("good_proxy.txt")
 	myIpRegexp := regexpForMyIp()
 	myIp = getMyIp(ipCheckerUrl, myIpRegexp)
@@ -103,24 +91,6 @@ func saveGoodProxy(proxy string) {
 	f.Sync()
 }
 
-func countThreadsOrExit(count string) int {
-	countThreads, err := strconv.Atoi(count)
-	if err != nil {
-		printError()
-		os.Exit(1)
-	}
-	return countThreads
-}
-
-func proxyFileOrExit(fileName string) *os.File {
-	file, err := os.Open(fileName)
-	if err != nil {
-		printError()
-		os.Exit(1)
-	}
-	return file
-}
-
 func regexpForMyIp() *regexp.Regexp {
 	r, err := regexp.Compile("([[:digit:]]+.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+)")
 	if err != nil {
@@ -159,8 +129,4 @@ func loadProxyFromFile(file *os.File) {
 			proxies = append(proxies, proxy)
 		}
 	}
-}
-
-func printError() {
-	fmt.Println("Usage: " + os.Args[0] + " <count_threads>" + " <file_with_proxy>")
 }
